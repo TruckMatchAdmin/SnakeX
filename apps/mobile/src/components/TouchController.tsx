@@ -1,9 +1,18 @@
 /**
- * Contrôleur tactile virtuel adapté pour smartphones (Portrait & Paysage)
+ * Contrôles tactiles : on dirige le serpent en touchant/glissant n'importe où sur l'écran.
+ * Le serpent se dirige vers le point touché (caméra centrée sur le joueur => centre de l'écran).
+ * Fonctionne en portrait et en paysage car il s'appuie sur la taille de fenêtre courante.
  */
 
-import React, { useState } from 'react';
-import { View, StyleSheet, TouchableOpacity, Text, GestureResponderEvent } from 'react-native';
+import React, { useRef, useState } from 'react';
+import {
+  View,
+  StyleSheet,
+  TouchableOpacity,
+  Text,
+  GestureResponderEvent,
+  useWindowDimensions,
+} from 'react-native';
 import { COLORS } from '../theme/colors';
 
 interface TouchControllerProps {
@@ -12,74 +21,56 @@ interface TouchControllerProps {
   isBoosting: boolean;
 }
 
+// ~30 envois/s maximum : reste sous la limite serveur (40/s) tout en restant fluide
+const SEND_INTERVAL_MS = 33;
+
 export const TouchController: React.FC<TouchControllerProps> = ({
   onAngleChange,
   onBoostChange,
   isBoosting,
 }) => {
-  const [joystickCenter, setJoystickCenter] = useState<{ x: number; y: number } | null>(null);
-  const [knobPos, setKnobPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const { width, height } = useWindowDimensions();
+  const [touchPoint, setTouchPoint] = useState<{ x: number; y: number } | null>(null);
+  const lastSentRef = useRef(0);
 
-  const handleTouchStart = (e: GestureResponderEvent) => {
+  const steer = (e: GestureResponderEvent, force = false) => {
     const { pageX, pageY } = e.nativeEvent;
-    setJoystickCenter({ x: pageX, y: pageY });
-    setKnobPos({ x: 0, y: 0 });
+    setTouchPoint({ x: pageX, y: pageY });
+
+    const now = Date.now();
+    if (!force && now - lastSentRef.current < SEND_INTERVAL_MS) return;
+    lastSentRef.current = now;
+
+    const dx = pageX - width / 2;
+    const dy = pageY - height / 2;
+    if (Math.abs(dx) + Math.abs(dy) < 4) return;
+    onAngleChange(Math.atan2(dy, dx));
   };
 
-  const handleTouchMove = (e: GestureResponderEvent) => {
-    if (!joystickCenter) return;
-    const { pageX, pageY } = e.nativeEvent;
-    const dx = pageX - joystickCenter.x;
-    const dy = pageY - joystickCenter.y;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-
-    if (dist > 5) {
-      const angle = Math.atan2(dy, dx);
-      onAngleChange(angle);
-
-      const maxRadius = 45;
-      const clampedDist = Math.min(maxRadius, dist);
-      setKnobPos({
-        x: Math.cos(angle) * clampedDist,
-        y: Math.sin(angle) * clampedDist,
-      });
-    }
-  };
-
-  const handleTouchEnd = () => {
-    setJoystickCenter(null);
-    setKnobPos({ x: 0, y: 0 });
-  };
+  const release = () => setTouchPoint(null);
 
   return (
-    <View style={StyleSheet.absoluteFillObject} pointerEvents="box-none">
-      {/* Zone de pilotage tactile (partie gauche de l'écran) */}
+    <View style={styles.root} pointerEvents="box-none">
+      {/* Zone de pilotage : tout l'écran */}
       <View
-        style={styles.steeringZone}
+        style={StyleSheet.absoluteFill}
         onStartShouldSetResponder={() => true}
-        onResponderGrant={handleTouchStart}
-        onResponderMove={handleTouchMove}
-        onResponderRelease={handleTouchEnd}
-        onResponderTerminate={handleTouchEnd}
-      >
-        {joystickCenter && (
-          <View
-            style={[
-              styles.joystickBase,
-              { left: joystickCenter.x - 50, top: joystickCenter.y - 50 },
-            ]}
-          >
-            <View
-              style={[
-                styles.joystickKnob,
-                { transform: [{ translateX: knobPos.x }, { translateY: knobPos.y }] },
-              ]}
-            />
-          </View>
-        )}
-      </View>
+        onMoveShouldSetResponder={() => true}
+        onResponderGrant={(e) => steer(e, true)}
+        onResponderMove={(e) => steer(e)}
+        onResponderRelease={release}
+        onResponderTerminate={release}
+      />
 
-      {/* Bouton de Boost Néon (partie droite basse de l'écran) */}
+      {/* Repère visuel du point visé */}
+      {touchPoint && (
+        <View
+          pointerEvents="none"
+          style={[styles.target, { left: touchPoint.x - 22, top: touchPoint.y - 22 }]}
+        />
+      )}
+
+      {/* Bouton de Boost (bas droite) */}
       <View style={styles.boostContainer} pointerEvents="box-none">
         <TouchableOpacity
           activeOpacity={0.8}
@@ -87,9 +78,7 @@ export const TouchController: React.FC<TouchControllerProps> = ({
           onPressIn={() => onBoostChange(true)}
           onPressOut={() => onBoostChange(false)}
         >
-          <Text style={[styles.boostText, isBoosting && styles.boostTextActive]}>
-            ⚡ BOOST
-          </Text>
+          <Text style={[styles.boostText, isBoosting && styles.boostTextActive]}>⚡ BOOST</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -97,34 +86,18 @@ export const TouchController: React.FC<TouchControllerProps> = ({
 };
 
 const styles = StyleSheet.create({
-  steeringZone: {
-    position: 'absolute',
-    left: 0,
-    top: 0,
-    bottom: 0,
-    width: '65%',
+  root: {
+    ...StyleSheet.absoluteFill,
+    zIndex: 10,
   },
-  joystickBase: {
+  target: {
     position: 'absolute',
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    backgroundColor: 'rgba(0, 229, 255, 0.15)',
-    borderWidth: 2,
-    borderColor: 'rgba(0, 229, 255, 0.4)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  joystickKnob: {
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: COLORS.PRIMARY_NEON,
-    shadowColor: COLORS.PRIMARY_NEON,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.9,
-    shadowRadius: 10,
-    elevation: 8,
+    borderWidth: 2,
+    borderColor: 'rgba(0, 229, 255, 0.7)',
+    backgroundColor: 'rgba(0, 255, 102, 0.18)',
   },
   boostContainer: {
     position: 'absolute',
@@ -141,17 +114,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     elevation: 6,
-    shadowColor: COLORS.SECONDARY_CYAN,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.6,
-    shadowRadius: 8,
   },
   boostButtonActive: {
     backgroundColor: COLORS.SECONDARY_CYAN,
     borderColor: COLORS.PRIMARY_NEON,
-    shadowColor: COLORS.PRIMARY_NEON,
-    shadowOpacity: 1,
-    shadowRadius: 16,
     transform: [{ scale: 1.08 }],
   },
   boostText: {

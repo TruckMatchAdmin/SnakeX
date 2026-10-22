@@ -59,7 +59,7 @@ export const DeathModal: React.FC<DeathModalProps> = ({ stats, onRespawn, onExit
 
 const styles = StyleSheet.create({
   overlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: COLORS.OVERLAY,
     justifyContent: 'center',
     alignItems: 'center',

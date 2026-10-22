@@ -48,7 +48,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
   return (
     <View style={[styles.container, { width, height }]}>
-      <Svg width={width} height={height} style={StyleSheet.absoluteFillObject}>
+      <Svg width={width} height={height} style={StyleSheet.absoluteFill}>
         <Defs>
           <RadialGradient id="arenaGlow" cx="50%" cy="50%" rx="50%" ry="50%">
             <Stop offset="90%" stopColor="#0B1528" stopOpacity="0" />

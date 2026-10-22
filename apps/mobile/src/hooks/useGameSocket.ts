@@ -16,8 +16,8 @@ import {
   TickPayload,
 } from '@snakex/shared';
 
-// URL par défaut du serveur de jeu OVH VPS
-const DEFAULT_SERVER_URL = process.env.EXPO_PUBLIC_SERVER_URL || 'http://152.228.137.4:3001';
+// URL par défaut du serveur de jeu OVH VPS (Reverse proxy Nginx port 80)
+const DEFAULT_SERVER_URL = process.env.EXPO_PUBLIC_SERVER_URL || 'http://152.228.137.4';
 
 export interface UseGameSocketReturn {
   isConnected: boolean;

@@ -131,7 +131,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, onAuthenticated }
 
 const styles = StyleSheet.create({
   overlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: COLORS.OVERLAY,
     justifyContent: 'center',
     alignItems: 'center',

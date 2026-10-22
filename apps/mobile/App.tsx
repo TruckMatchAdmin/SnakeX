@@ -76,7 +76,7 @@ export default function App() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <StatusBar barStyle="light-content" backgroundColor={COLORS.BACKGROUND} />
+      <StatusBar barStyle="light-content" />
 
       {inGame ? (
         <View style={styles.gameContainer}>
@@ -89,14 +89,7 @@ export default function App() {
             orbs={orbs}
           />
 
-          {/* 2. Contrôles tactiles (joystick virtuel & boost) */}
-          <TouchController
-            onAngleChange={handleAngleChange}
-            onBoostChange={handleBoostChange}
-            isBoosting={isBoosting}
-          />
-
-          {/* 3. Interface tête haute (HUD) */}
+          {/* 2. Interface tête haute (HUD) : en dessous des contrôles pour ne jamais bloquer les touches */}
           <HUD
             score={mySnake?.score || 0}
             length={mySnake?.body.length || 0}
@@ -107,6 +100,13 @@ export default function App() {
             isConnected={isConnected}
             isLandscape={isLandscape}
             notification={serverNotification}
+          />
+
+          {/* 3. Contrôles tactiles (visée à l'écran & boost) : au-dessus du HUD */}
+          <TouchController
+            onAngleChange={handleAngleChange}
+            onBoostChange={handleBoostChange}
+            isBoosting={isBoosting}
           />
 
           {/* 4. Écran de défaite */}

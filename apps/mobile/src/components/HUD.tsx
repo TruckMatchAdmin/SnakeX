@@ -38,7 +38,7 @@ export const HUD: React.FC<HUDProps> = ({
   };
 
   return (
-    <View style={StyleSheet.absoluteFillObject} pointerEvents="none">
+    <View style={StyleSheet.absoluteFill} pointerEvents="none">
       {/* 1. Bandeau supérieur : Statut & Statistiques Personnelles */}
       <View style={[styles.topBar, isLandscape && styles.topBarLandscape]}>
         <View style={styles.statsCard}>
