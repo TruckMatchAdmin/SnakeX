@@ -1,12 +1,30 @@
 {
-  "name": "snakex",
-  "version": "0.1.0",
+  "name": "snakex-monorepo",
+  "version": "1.0.0",
   "private": true,
-  "description": "SnakeX Project",
+  "description": "SnakeX — Real-time multiplayer mobile snake arena game",
+  "workspaces": [
+    "packages/*",
+    "services/*",
+    "apps/*"
+  ],
   "scripts": {
-    "start": "node index.js"
+    "build:shared": "npm run build --workspace=@snakex/shared",
+    "build:server": "npm run build --workspace=@snakex/game-server",
+    "build": "npm run build:shared && npm run build:server",
+    "start:server": "npm run start --workspace=@snakex/game-server",
+    "dev:server": "npm run dev --workspace=@snakex/game-server",
+    "test": "npm run test --workspace=@snakex/game-server",
+    "load-test": "npm run load-test --workspace=@snakex/game-server"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC"
+  "keywords": [
+    "snake",
+    "multiplayer",
+    "socket.io",
+    "react-native",
+    "expo",
+    "supabase"
+  ],
+  "author": "SnakeX Team",
+  "license": "UNLICENSED"
 }

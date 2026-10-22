@@ -1,0 +1,88 @@
+name: SnakeX Android Build & Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-android:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Cloner le dépôt SnakeX
+        uses: actions/checkout@v4
+
+      - name: ☕ Configurer Java JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: 📱 Configurer Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: 🟢 Configurer Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: 📦 Installer les dépendances du monorepo
+        run: |
+          npm ci || npm install
+
+      - name: 🏗️ Compiler les packages partagés
+        run: |
+          npm run build:shared
+
+      - name: ⚙️ Expo Prebuild Android
+        working-directory: apps/mobile
+        run: |
+          npx expo prebuild --platform android --clean --no-install
+
+      - name: 🔨 Compiler l'APK Android (Gradle)
+        working-directory: apps/mobile/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease || ./gradlew assembleDebug
+
+      - name: 🔍 Localiser et renommer l'APK généré
+        id: locate_apk
+        run: |
+          mkdir -p output_apk
+          APK_PATH=$(find apps/mobile/android/app/build/outputs/apk/ -name "*.apk" | head -n 1)
+          if [ -n "$APK_PATH" ]; then
+            cp "$APK_PATH" output_apk/SnakeX.apk
+            cd output_apk
+            sha256sum SnakeX.apk > SnakeX.apk.sha256
+            echo "APK_EXISTS=true" >> $GITHUB_OUTPUT
+            echo "SHA256=$(cat SnakeX.apk.sha256 | awk '{print $1}')" >> $GITHUB_OUTPUT
+            ls -la
+          else
+            echo "APK_EXISTS=false" >> $GITHUB_OUTPUT
+            echo "Erreur : Aucun APK généré."
+            exit 1
+          fi
+
+      - name: 💾 Sauvegarder l'artefact APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: SnakeX-Android-APK
+          path: |
+            output_apk/SnakeX.apk
+            output_apk/SnakeX.apk.sha256
+          retention-days: 30
+
+      - name: 🚀 Déployer l'APK sur le VPS OVH (Optionnel)
+        if: env.VPS_SSH_KEY != ''
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_HOST || '152.228.137.4' }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$VPS_SSH_KEY" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh -o StrictHostKeyChecking=no ubuntu@$VPS_HOST "mkdir -p /var/www/snakex/public/downloads"
+          scp -o StrictHostKeyChecking=no output_apk/* ubuntu@$VPS_HOST:/var/www/snakex/public/downloads/

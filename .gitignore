@@ -2,8 +2,16 @@ node_modules/
 .env
 .env.local
 .env.*.local
+CREDENTIALS.md
+*.pem
+*.key
 dist/
 build/
 .next/
 *.log
 .DS_Store
+.expo/
+.expo-shared/
+web-build/
+*.tsbuildinfo
+bundle-deploy/
