@@ -1,0 +1,12 @@
+{
+  "name": "snakex",
+  "version": "0.1.0",
+  "private": true,
+  "description": "SnakeX Project",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}
