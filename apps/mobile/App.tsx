@@ -6,12 +6,7 @@
 import React, { useState } from 'react';
 import {
   View,
-  Text,
   StyleSheet,
-  Image,
-  TextInput,
-  TouchableOpacity,
-  SafeAreaView,
   StatusBar,
 } from 'react-native';
 import { useOrientation } from './src/hooks/useOrientation';
@@ -21,12 +16,15 @@ import { TouchController } from './src/components/TouchController';
 import { HUD } from './src/components/HUD';
 import { DeathModal } from './src/components/DeathModal';
 import { AuthModal } from './src/components/AuthModal';
+import { LobbyScreen } from './src/components/LobbyScreen';
 import { COLORS } from './src/theme/colors';
+import { SNAKE_SKINS } from '@snakex/shared';
 
 export default function App() {
   const { width, height, isLandscape } = useOrientation();
   const [inGame, setInGame] = useState(false);
   const [playerName, setPlayerName] = useState('SnakeMaster');
+  const [selectedSkinId, setSelectedSkinId] = useState('neon_viper');
   const [authToken, setAuthToken] = useState<string | undefined>(undefined);
   const [currentUser, setCurrentUser] = useState<{ id: string; username: string } | null>(null);
   const [showAuthModal, setShowAuthModal] = useState(false);
@@ -36,7 +34,10 @@ export default function App() {
     isConnected,
     myPlayerId,
     players,
-    orbs,
+    snapshotsRef,
+    inputRef,
+    latencyRef,
+    orbsMapRef,
     leaderboard,
     deathStats,
     latencyMs,
@@ -44,11 +45,13 @@ export default function App() {
     joinGame,
     sendInput,
     respawn,
+    resetDeath,
     reconnect,
   } = useGameSocket();
 
   // Joueur local
   const mySnake = players.find((p) => p.id === myPlayerId);
+  const selectedSkin = SNAKE_SKINS.find((s) => s.id === selectedSkinId) || SNAKE_SKINS[0];
 
   const handleStartGame = () => {
     const finalName = playerName.trim() || 'Snake_Player';
@@ -57,13 +60,14 @@ export default function App() {
   };
 
   const handleAngleChange = (angle: number) => {
-    sendInput(angle, isBoosting);
+    sendInput(angle, inputRef.current.boost);
   };
 
   const handleBoostChange = (boosting: boolean) => {
     setIsBoosting(boosting);
-    if (mySnake) {
-      sendInput(mySnake.angle, boosting);
+    const angle = inputRef.current.angle ?? mySnake?.angle;
+    if (angle !== undefined) {
+      sendInput(angle, boosting);
     }
   };
 
@@ -75,34 +79,39 @@ export default function App() {
   };
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <StatusBar barStyle="light-content" />
+    <View style={styles.container}>
+      <StatusBar hidden={true} />
 
       {inGame ? (
         <View style={styles.gameContainer}>
-          {/* 1. Moteur de rendu arène 2D */}
+          {/* 1. Moteur de rendu arène 2D Ultra-Fluide */}
           <GameCanvas
             width={width}
             height={height}
             myPlayerId={myPlayerId}
-            players={players}
-            orbs={orbs}
+            snapshotsRef={snapshotsRef}
+            inputRef={inputRef}
+            latencyRef={latencyRef}
+            orbsMapRef={orbsMapRef}
+            leaderboard={leaderboard}
+            localColors={selectedSkin}
           />
 
-          {/* 2. Interface tête haute (HUD) : en dessous des contrôles pour ne jamais bloquer les touches */}
+          {/* 2. Interface tête haute (HUD) */}
           <HUD
             score={mySnake?.score || 0}
             length={mySnake?.body.length || 0}
-            kills={0}
+            kills={leaderboard.find((l) => l.id === myPlayerId)?.kills || 0}
             leaderboard={leaderboard}
             myPlayerId={myPlayerId}
             latencyMs={latencyMs}
             isConnected={isConnected}
             isLandscape={isLandscape}
             notification={serverNotification}
+            players={players}
           />
 
-          {/* 3. Contrôles tactiles (visée à l'écran & boost) : au-dessus du HUD */}
+          {/* 3. Contrôles tactiles (visée à l'écran & boost) */}
           <TouchController
             onAngleChange={handleAngleChange}
             onBoostChange={handleBoostChange}
@@ -114,64 +123,27 @@ export default function App() {
             <DeathModal
               stats={deathStats}
               onRespawn={() => respawn()}
-              onExitMenu={() => setInGame(false)}
+              onExitMenu={() => {
+                resetDeath();
+                setInGame(false);
+              }}
             />
           )}
         </View>
       ) : (
-        /* MENU PRINCIPAL / LOBBY */
-        <View style={[styles.lobbyContainer, isLandscape && styles.lobbyLandscape]}>
-          <View style={styles.brandingBox}>
-            <Image
-              source={require('./assets/logo.png')}
-              style={[styles.logoImage, isLandscape && styles.logoLandscape]}
-              resizeMode="contain"
-            />
-            <Text style={styles.slogan}>GROW. FIGHT. DOMINATE.</Text>
-          </View>
-
-          <View style={styles.formCard}>
-            <Text style={styles.inputLabel}>VOTRE PSEUDONYME :</Text>
-            <TextInput
-              style={styles.nameInput}
-              value={playerName}
-              onChangeText={setPlayerName}
-              placeholder="Entrez votre pseudo"
-              placeholderTextColor={COLORS.TEXT_MUTED}
-              maxLength={16}
-            />
-
-            <TouchableOpacity
-              style={styles.playButton}
-              activeOpacity={0.8}
-              onPress={handleStartGame}
-            >
-              <Text style={styles.playButtonText}>🎮 JOUER MAINTENANT</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.authButton}
-              activeOpacity={0.8}
-              onPress={() => setShowAuthModal(true)}
-            >
-              <Text style={styles.authButtonText}>
-                {currentUser ? `👤 ${currentUser.username} (Connecté)` : '🔐 Connexion / Inscription Supabase'}
-              </Text>
-            </TouchableOpacity>
-
-            <View style={styles.serverStatusRow}>
-              <View
-                style={[
-                  styles.statusIndicator,
-                  { backgroundColor: isConnected ? COLORS.PRIMARY_NEON : COLORS.DANGER },
-                ]}
-              />
-              <Text style={styles.serverStatusText}>
-                {isConnected ? 'Serveur OVH En Ligne' : 'Connexion au VPS en cours...'}
-              </Text>
-            </View>
-          </View>
-        </View>
+        /* MENU PRINCIPAL ÉPURÉ & PARFAITEMENT ENCADRÉ */
+        <LobbyScreen
+          playerName={playerName}
+          setPlayerName={setPlayerName}
+          selectedSkinId={selectedSkinId}
+          setSelectedSkinId={setSelectedSkinId}
+          onStartGame={handleStartGame}
+          isConnected={isConnected}
+          latencyMs={latencyMs}
+          currentUser={currentUser}
+          onOpenAuth={() => setShowAuthModal(true)}
+          isLandscape={isLandscape}
+        />
       )}
 
       {/* Modal Supabase Auth */}
@@ -181,122 +153,18 @@ export default function App() {
           onAuthenticated={handleAuthenticated}
         />
       )}
-    </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: {
+  container: {
     flex: 1,
-    backgroundColor: COLORS.BACKGROUND,
+    backgroundColor: '#040711',
   },
   gameContainer: {
     flex: 1,
     position: 'relative',
     backgroundColor: COLORS.BACKGROUND,
-  },
-  lobbyContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 24,
-  },
-  lobbyLandscape: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-  },
-  brandingBox: {
-    alignItems: 'center',
-    marginBottom: 24,
-  },
-  logoImage: {
-    width: 240,
-    height: 180,
-  },
-  logoLandscape: {
-    width: 220,
-    height: 150,
-  },
-  slogan: {
-    color: COLORS.SECONDARY_CYAN,
-    fontSize: 14,
-    fontWeight: '900',
-    letterSpacing: 3,
-    marginTop: 8,
-  },
-  formCard: {
-    width: '100%',
-    maxWidth: 360,
-    backgroundColor: COLORS.SURFACE,
-    borderRadius: 16,
-    padding: 24,
-    borderWidth: 1,
-    borderColor: COLORS.BORDER,
-  },
-  inputLabel: {
-    color: COLORS.TEXT_MUTED,
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 1,
-    marginBottom: 8,
-  },
-  nameInput: {
-    backgroundColor: COLORS.SURFACE_LIGHT,
-    borderRadius: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    color: COLORS.TEXT_LIGHT,
-    fontSize: 16,
-    fontWeight: 'bold',
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: COLORS.BORDER,
-  },
-  playButton: {
-    backgroundColor: COLORS.PRIMARY_NEON,
-    borderRadius: 10,
-    paddingVertical: 15,
-    alignItems: 'center',
-    marginBottom: 12,
-    shadowColor: COLORS.PRIMARY_NEON,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.6,
-    shadowRadius: 10,
-    elevation: 8,
-  },
-  playButtonText: {
-    color: COLORS.BACKGROUND,
-    fontSize: 16,
-    fontWeight: '900',
-    letterSpacing: 1,
-  },
-  authButton: {
-    backgroundColor: 'transparent',
-    borderWidth: 1,
-    borderColor: COLORS.SECONDARY_CYAN,
-    borderRadius: 10,
-    paddingVertical: 12,
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  authButtonText: {
-    color: COLORS.SECONDARY_CYAN,
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  serverStatusRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-  },
-  statusIndicator: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  serverStatusText: {
-    color: COLORS.TEXT_MUTED,
-    fontSize: 12,
   },
 });

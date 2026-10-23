@@ -46,11 +46,11 @@ export const DeathModal: React.FC<DeathModalProps> = ({ stats, onRespawn, onExit
         </View>
 
         <TouchableOpacity style={styles.respawnButton} activeOpacity={0.8} onPress={onRespawn}>
-          <Text style={styles.respawnButtonText}>🔄 REJOUER IMMÉDIATEMENT</Text>
+          <Text style={styles.respawnButtonText}>⚡ REJOUER IMMÉDIATEMENT</Text>
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.exitButton} activeOpacity={0.8} onPress={onExitMenu}>
-          <Text style={styles.exitButtonText}>MENU PRINCIPAL</Text>
+          <Text style={styles.exitButtonText}>🏠 RETOUR AU MENU PRINCIPAL</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -142,13 +142,17 @@ const styles = StyleSheet.create({
   },
   exitButton: {
     width: '100%',
-    backgroundColor: 'transparent',
-    paddingVertical: 10,
+    backgroundColor: 'rgba(19, 34, 63, 0.7)',
+    borderWidth: 1.5,
+    borderColor: COLORS.SECONDARY_CYAN,
+    paddingVertical: 12,
+    borderRadius: 10,
     alignItems: 'center',
   },
   exitButtonText: {
-    color: COLORS.TEXT_MUTED,
+    color: COLORS.SECONDARY_CYAN,
     fontSize: 13,
-    fontWeight: '600',
+    fontWeight: '800',
+    letterSpacing: 1,
   },
 });

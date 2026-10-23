@@ -1,157 +1,210 @@
 /**
- * Moteur de rendu 2D React Native Svg pour l'arène SnakeX
- * Caméra centrée sur le joueur, interpolation visuelle, effets néon et arène circulaire
+ * Moteur de rendu SnakeX
+ * - Boucle requestAnimationFrame (~45 FPS max) INDÉPENDANTE des ticks réseau (30 Hz)
+ * - Interpolation entre snapshots avec ~100 ms de retard de rendu : mouvement fluide malgré ping/jitter
+ * - Seul ce composant se re-rend à chaque frame (App/HUD ne bougent plus)
+ * - Culling des serpents hors écran
  */
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, StyleSheet } from 'react-native';
-import Svg, { Circle, Line, Text as SvgText, G, Defs, RadialGradient, Stop } from 'react-native-svg';
-import { ARENA_RADIUS, Orb } from '@snakex/shared';
-import { COLORS } from '../theme/colors';
-import { TickPayload } from '@snakex/shared';
+import Svg from 'react-native-svg';
+import { Orb, LeaderboardEntry, TickPayload } from '@snakex/shared';
+import { HexagonArena } from './HexagonArena';
+import { SnakeRenderer } from './SnakeRenderer';
+import { OrbsRenderer } from './OrbsRenderer';
+import type { TimedSnapshot } from '../hooks/useGameSocket';
+import { MutableRefObject, useRef } from 'react';
+import { LocalPredictor, LocalInput } from '../utils/prediction';
+
+type Players = TickPayload['players'];
 
 interface GameCanvasProps {
   width: number;
   height: number;
   myPlayerId: string | null;
-  players: TickPayload['players'];
-  orbs: Orb[];
+  snapshotsRef: MutableRefObject<TimedSnapshot[]>;
+  inputRef: MutableRefObject<LocalInput>;
+  latencyRef: MutableRefObject<number>;
+  orbsMapRef: MutableRefObject<Map<string, Orb>>;
+  leaderboard?: LeaderboardEntry[];
+  localColors?: { primary: string; secondary: string };
+}
+
+// Retard de rendu : ~3 ticks serveur de marge contre le jitter réseau
+const INTERPOLATION_DELAY_MS = 100;
+// Plafond de FPS de rendu (le SVG ne tient pas 60 FPS de façon stable sur mobile)
+const MIN_FRAME_INTERVAL_MS = 22;
+
+function lerpAngle(a: number, b: number, t: number): number {
+  let d = b - a;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  return a + d * t;
+}
+
+/** Interpole les serpents entre deux snapshots encadrant l'instant de rendu */
+function interpolate(buf: TimedSnapshot[], renderTime: number): Players {
+  const n = buf.length;
+  if (n === 0) return [];
+  if (n === 1 || renderTime <= buf[0].t) return buf[0].players;
+  if (renderTime >= buf[n - 1].t) return buf[n - 1].players;
+
+  let i = 0;
+  while (i < n - 2 && buf[i + 1].t < renderTime) i++;
+  const a = buf[i];
+  const b = buf[i + 1];
+  const span = b.t - a.t;
+  const t = span > 0 ? Math.min(1, Math.max(0, (renderTime - a.t) / span)) : 1;
+
+  const prev = new Map<string, Players[0]>();
+  for (const p of a.players) prev.set(p.id, p);
+
+  return b.players.map((p) => {
+    const q = prev.get(p.id);
+    if (!q || q.body.length === 0) return p;
+    const body = new Array(p.body.length);
+    for (let k = 0; k < p.body.length; k++) {
+      const pa = q.body[k] || q.body[q.body.length - 1];
+      const pb = p.body[k];
+      body[k] = { x: pa.x + (pb.x - pa.x) * t, y: pa.y + (pb.y - pa.y) * t };
+    }
+    return { ...p, body, angle: lerpAngle(q.angle, p.angle, t) };
+  });
 }
 
 export const GameCanvas: React.FC<GameCanvasProps> = ({
   width,
   height,
   myPlayerId,
-  players,
-  orbs,
+  snapshotsRef,
+  inputRef,
+  latencyRef,
+  orbsMapRef,
+  leaderboard = [],
+  localColors,
 }) => {
-  // Trouver le joueur local pour centrer la caméra
-  const mySnake = players.find((p) => p.id === myPlayerId) || players[0];
+  const [players, setPlayers] = useState<Players>([]);
+  const predictorRef = useRef(new LocalPredictor());
 
-  const cameraX = mySnake?.body[0]?.x ?? 0;
-  const cameraY = mySnake?.body[0]?.y ?? 0;
+  useEffect(() => {
+    let raf = 0;
+    let last = 0;
+    const predictor = predictorRef.current;
+    const loop = (ts: number) => {
+      raf = requestAnimationFrame(loop);
+      if (ts - last < MIN_FRAME_INTERVAL_MS) return;
+      last = ts;
+      const buf = snapshotsRef.current;
+      if (buf.length === 0) {
+        predictor.reset();
+        return;
+      }
+      const now = Date.now();
+      const frame = interpolate(buf, now - INTERPOLATION_DELAY_MS);
+
+      // Prédiction locale : remplace le serpent du joueur par sa version prédite
+      const latest = buf[buf.length - 1];
+      const serverMe = myPlayerId ? latest.players.find((p) => p.id === myPlayerId) : undefined;
+      if (serverMe) {
+        const predicted = predictor.update(
+          now,
+          inputRef.current,
+          serverMe,
+          now - latest.t,
+          latencyRef.current
+        );
+        const idx = frame.findIndex((p) => p.id === myPlayerId);
+        if (idx >= 0) frame[idx] = predicted;
+        else frame.push(predicted);
+      } else {
+        predictor.reset();
+      }
+      setPlayers(frame);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [snapshotsRef, inputRef, latencyRef, myPlayerId]);
+
+  const localSnake = players.find((p) => p.id === myPlayerId);
+  const cameraX = localSnake?.body[0]?.x ?? 0;
+  const cameraY = localSnake?.body[0]?.y ?? 0;
 
   const halfWidth = width / 2;
   const halfHeight = height / 2;
 
-  // Conversion Coordonnées Monde -> Coordonnées Écran
-  const toScreenX = (wx: number) => wx - cameraX + halfWidth;
-  const toScreenY = (wy: number) => wy - cameraY + halfHeight;
+  // Caméra panoramique, dézoom progressif selon le score
+  const zoom = Math.max(0.4, 0.56 - Math.sqrt(localSnake?.score || 0) * 0.002);
 
-  // Filtrage des éléments visibles pour les performances d'affichage
-  const margin = 100;
-  const visibleOrbs = orbs.filter((orb) => {
-    const sx = toScreenX(orb.x);
-    const sy = toScreenY(orb.y);
-    return sx >= -margin && sx <= width + margin && sy >= -margin && sy <= height + margin;
+  const toScreenX = (wx: number) => (wx - cameraX) * zoom + halfWidth;
+  const toScreenY = (wy: number) => (wy - cameraY) * zoom + halfHeight;
+
+  // Culling : on ne dessine que les serpents dont la boîte englobante touche l'écran
+  const pad = 80;
+  const visibleOthers = players.filter((p) => {
+    if (p.id === myPlayerId || p.body.length === 0) return false;
+    let minX = Infinity,
+      maxX = -Infinity,
+      minY = Infinity,
+      maxY = -Infinity;
+    for (let i = 0; i < p.body.length; i += 3) {
+      const b = p.body[i];
+      if (b.x < minX) minX = b.x;
+      if (b.x > maxX) maxX = b.x;
+      if (b.y < minY) minY = b.y;
+      if (b.y > maxY) maxY = b.y;
+    }
+    const sx1 = toScreenX(minX) - pad;
+    const sx2 = toScreenX(maxX) + pad;
+    const sy1 = toScreenY(minY) - pad;
+    const sy2 = toScreenY(maxY) + pad;
+    return sx2 >= 0 && sx1 <= width && sy2 >= 0 && sy1 <= height;
   });
 
   return (
     <View style={[styles.container, { width, height }]}>
       <Svg width={width} height={height} style={StyleSheet.absoluteFill}>
-        <Defs>
-          <RadialGradient id="arenaGlow" cx="50%" cy="50%" rx="50%" ry="50%">
-            <Stop offset="90%" stopColor="#0B1528" stopOpacity="0" />
-            <Stop offset="100%" stopColor={COLORS.DANGER} stopOpacity="0.4" />
-          </RadialGradient>
-        </Defs>
-
-        {/* 1. Limite circulaire de l'arène de jeu */}
-        <Circle
-          cx={toScreenX(0)}
-          cy={toScreenY(0)}
-          r={ARENA_RADIUS}
-          fill="url(#arenaGlow)"
-          stroke={COLORS.DANGER}
-          strokeWidth={8}
-          strokeDasharray="16, 8"
+        <HexagonArena
+          width={width}
+          height={height}
+          cameraX={cameraX}
+          cameraY={cameraY}
+          zoom={zoom}
         />
 
-        {/* 2. Affichage des Orbes d'énergie */}
-        {visibleOrbs.map((orb) => {
-          const sx = toScreenX(orb.x);
-          const sy = toScreenY(orb.y);
-          return (
-            <Circle
-              key={orb.id}
-              cx={sx}
-              cy={sy}
-              r={orb.radius}
-              fill={orb.color}
-              opacity={0.9}
-            />
-          );
-        })}
+        <OrbsRenderer
+          orbsMap={orbsMapRef.current}
+          toScreenX={toScreenX}
+          toScreenY={toScreenY}
+          zoom={zoom}
+          width={width}
+          height={height}
+        />
 
-        {/* 3. Affichage des Serpents */}
-        {players.map((snake) => {
-          if (!snake.isAlive || snake.body.length === 0) return null;
+        {visibleOthers.map((snake) => (
+          <SnakeRenderer
+            key={snake.id}
+            snake={snake}
+            isLocal={false}
+            toScreenX={toScreenX}
+            toScreenY={toScreenY}
+            zoom={zoom}
+            leaderboard={leaderboard}
+          />
+        ))}
 
-          const isLocal = snake.id === myPlayerId;
-          const head = snake.body[0];
-          const headSx = toScreenX(head.x);
-          const headSy = toScreenY(head.y);
-
-          const mainColor = isLocal ? COLORS.PRIMARY_NEON : COLORS.SECONDARY_CYAN;
-          const eyeColor = isLocal ? COLORS.SECONDARY_CYAN : COLORS.PRIMARY_NEON;
-
-          // Yeux orientés dans la direction du déplacement
-          const eyeDistance = snake.radius * 0.55;
-          const eyeOffsetAngle = 0.55;
-          const eye1X = headSx + Math.cos(snake.angle + eyeOffsetAngle) * eyeDistance;
-          const eye1Y = headSy + Math.sin(snake.angle + eyeOffsetAngle) * eyeDistance;
-          const eye2X = headSx + Math.cos(snake.angle - eyeOffsetAngle) * eyeDistance;
-          const eye2Y = headSy + Math.sin(snake.angle - eyeOffsetAngle) * eyeDistance;
-
-          return (
-            <G key={snake.id}>
-              {/* Corps (segments inversés pour afficher la tête par-dessus) */}
-              {snake.body
-                .slice()
-                .reverse()
-                .map((seg, idx) => {
-                  const segSx = toScreenX(seg.x);
-                  const segSy = toScreenY(seg.y);
-                  const isHeadSeg = idx === snake.body.length - 1;
-
-                  // Dégradé léger vers la queue
-                  const factor = (snake.body.length - idx) / snake.body.length;
-                  const radius = isHeadSeg ? snake.radius : snake.radius * (0.85 + factor * 0.15);
-
-                  return (
-                    <Circle
-                      key={`${snake.id}_seg_${idx}`}
-                      cx={segSx}
-                      cy={segSy}
-                      r={radius}
-                      fill={mainColor}
-                      stroke={snake.isBoosting ? '#FFFFFF' : '#050811'}
-                      strokeWidth={snake.isBoosting ? 2.5 : 1}
-                      opacity={isHeadSeg ? 1 : 0.88}
-                    />
-                  );
-                })}
-
-              {/* Yeux sur la tête */}
-              <Circle cx={eye1X} cy={eye1Y} r={snake.radius * 0.28} fill="#FFFFFF" />
-              <Circle cx={eye1X} cy={eye1Y} r={snake.radius * 0.14} fill={eyeColor} />
-              <Circle cx={eye2X} cy={eye2Y} r={snake.radius * 0.28} fill="#FFFFFF" />
-              <Circle cx={eye2X} cy={eye2Y} r={snake.radius * 0.14} fill={eyeColor} />
-
-              {/* Étiquette Score & Joueur au-dessus de la tête */}
-              <SvgText
-                x={headSx}
-                y={headSy - snake.radius - 10}
-                fill={COLORS.TEXT_LIGHT}
-                fontSize={12}
-                fontWeight="bold"
-                textAnchor="middle"
-              >
-                {`${isLocal ? '⭐ VOUS' : ''} [${snake.score}]`}
-              </SvgText>
-            </G>
-          );
-        })}
+        {localSnake && (
+          <SnakeRenderer
+            key={localSnake.id}
+            snake={localSnake}
+            isLocal={true}
+            toScreenX={toScreenX}
+            toScreenY={toScreenY}
+            zoom={zoom}
+            leaderboard={leaderboard}
+            colors={localColors}
+          />
+        )}
       </Svg>
     </View>
   );
@@ -159,7 +212,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: COLORS.BACKGROUND,
+    backgroundColor: '#040711',
     overflow: 'hidden',
   },
 });

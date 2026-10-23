@@ -23,6 +23,7 @@ import {
   PingPayload,
   PongPayload,
   ServerEvent,
+  TickPayload,
   TICK_INTERVAL_MS,
   TICK_RATE,
   THEME_COLORS,
@@ -32,6 +33,7 @@ import { GameArena } from './engine/GameArena';
 import { ClientRateLimiter } from './network/RateLimiter';
 import { SupabaseService } from './services/SupabaseService';
 import { MetricsCollector } from './metrics/MetricsCollector';
+import { filterPlayersForViewer, LEADERBOARD_EVERY_N_TICKS } from './network/interest';
 
 const PORT = Number(process.env.PORT) || 3001;
 
@@ -47,7 +49,8 @@ const io = new Server(server, {
   },
   pingInterval: 10000,
   pingTimeout: 5000,
-  transports: ['websocket', 'polling'],
+  transports: ['websocket'],
+  perMessageDeflate: false,
 });
 
 const arena = new GameArena();
@@ -157,13 +160,14 @@ io.on('connection', (socket: Socket) => {
       userId
     );
 
-    // Envoyer la configuration initiale et l'état
+    // Envoyer la configuration initiale, l'état complet et les orbes existants
     const initPayload: InitPayload = {
       playerId: socket.id,
       arena: arena.getArenaConfig(),
       tickRate: TICK_RATE,
       player: snake,
       leaderboard: arena.getLeaderboard(),
+      orbs: arena.orbManager.getAllOrbs(),
     };
     socket.emit(ServerEvent.INIT, initPayload);
 
@@ -218,6 +222,7 @@ io.on('connection', (socket: Socket) => {
       tickRate: TICK_RATE,
       player: snake,
       leaderboard: arena.getLeaderboard(),
+      orbs: arena.orbManager.getAllOrbs(),
     };
     socket.emit(ServerEvent.INIT, initPayload);
   });
@@ -241,7 +246,26 @@ const gameLoopInterval = setInterval(() => {
   const start = Date.now();
   try {
     const tickData = arena.tick();
-    io.emit(ServerEvent.TICK, tickData);
+    const includeLeaderboard = tickData.tick % LEADERBOARD_EVERY_N_TICKS === 0;
+
+    for (const [socketId, socket] of io.sockets.sockets) {
+      const me = arena.snakes.get(socketId);
+      const head = me && me.isAlive ? me.head : undefined;
+
+      const payload: TickPayload = {
+        tick: tickData.tick,
+        serverTime: tickData.serverTime,
+        // Hors partie ou mort : aucun serpent à afficher (écran de mort / accueil)
+        players: head
+          ? filterPlayersForViewer(tickData.players, socketId, head.x, head.y)
+          : [],
+        removedPlayerIds: tickData.removedPlayerIds,
+        orbsAdded: tickData.orbsAdded,
+        orbsRemoved: tickData.orbsRemoved,
+        leaderboard: includeLeaderboard ? tickData.leaderboard : undefined,
+      };
+      socket.volatile.emit(ServerEvent.TICK, payload);
+    }
   } catch (err) {
     console.error('[GameLoop Error]:', err);
   }

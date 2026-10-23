@@ -189,8 +189,9 @@ export class GameArena {
             const dy = head.y - orb.y;
             const collisionDist = snake.radius + orb.radius;
             if (dx * dx + dy * dy <= collisionDist * collisionDist) {
-              this.orbManager.removeOrb(orb.id);
-              snake.eatOrb(orb.value);
+              if (this.orbManager.removeOrb(orb.id)) {
+                snake.eatOrb(orb.value);
+              }
             }
           }
         }

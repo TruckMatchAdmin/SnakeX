@@ -48,6 +48,7 @@ export interface InitPayload {
   tickRate: number;
   player: SnakePlayer;
   leaderboard: LeaderboardEntry[];
+  orbs?: Orb[];
 }
 
 export interface TickPayload {
@@ -66,6 +67,7 @@ export interface TickPayload {
   removedPlayerIds: string[];
   orbsAdded: Orb[];
   orbsRemoved: string[];
+  leaderboard?: LeaderboardEntry[];
 }
 
 export interface DiedPayload {

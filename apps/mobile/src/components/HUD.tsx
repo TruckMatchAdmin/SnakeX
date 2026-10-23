@@ -1,12 +1,16 @@
 /**
- * Interface HUD (Affichage tête haute) réactive en jeu
- * Leaderboard en direct, scores, ping, notification serveur et adaptation portrait/paysage
+ * Interface HUD (Affichage tête haute) - Référence Slither.io Cyber
+ * - Haut-Gauche : Carte néon Score, Taille et Kills
+ * - Haut-Droite : Classement Top 10 avec icône trophée et bouton Paramètres
+ * - Bas-Droite : Mini-radar et bouton Boost
+ * - Parfaitement proportionné, adapté au portrait et au paysage
  */
 
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
-import { LeaderboardEntry } from '@snakex/shared';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { LeaderboardEntry, TickPayload } from '@snakex/shared';
 import { COLORS } from '../theme/colors';
+import { MiniRadar } from './MiniRadar';
 
 interface HUDProps {
   score: number;
@@ -18,7 +22,21 @@ interface HUDProps {
   isConnected: boolean;
   isLandscape: boolean;
   notification: string | null;
+  players?: TickPayload['players'];
 }
+
+const RANK_COLORS = [
+  '#00FF66', // #1 (Vert fluo)
+  '#00E5FF', // #2 (Cyan)
+  '#FF2A42', // #3 (Rouge)
+  '#FF8800', // #4 (Orange)
+  '#FFD700', // #5 (Or)
+  '#C084FC', // #6 (Violet)
+  '#60A5FA', // #7 (Bleu)
+  '#F472B6', // #8 (Rose)
+  '#A78BFA', // #9 (Lavande)
+  '#94A3B8', // #10 (Gris)
+];
 
 export const HUD: React.FC<HUDProps> = ({
   score,
@@ -30,203 +48,262 @@ export const HUD: React.FC<HUDProps> = ({
   isConnected,
   isLandscape,
   notification,
+  players = [],
 }) => {
   const getPingColor = (ping: number) => {
+    if (!isConnected) return COLORS.DANGER;
     if (ping < 70) return COLORS.PRIMARY_NEON;
     if (ping < 140) return COLORS.ACCENT_GOLD;
     return COLORS.DANGER;
   };
 
   return (
-    <View style={StyleSheet.absoluteFill} pointerEvents="none">
-      {/* 1. Bandeau supérieur : Statut & Statistiques Personnelles */}
-      <View style={[styles.topBar, isLandscape && styles.topBarLandscape]}>
-        <View style={styles.statsCard}>
+    <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+      {/* 1. PANNEAU HAUT-GAUCHE : SCORE, TAILLE, KILLS (Comme la référence) */}
+      <View style={[styles.statsCard, isLandscape && styles.statsCardLandscape]}>
+        <View style={styles.scoreHeaderRow}>
           <Text style={styles.scoreLabel}>SCORE</Text>
-          <Text style={styles.scoreValue}>{score}</Text>
+          <View style={styles.pingRow}>
+            <View
+              style={[
+                styles.pingDot,
+                { backgroundColor: getPingColor(latencyMs) },
+              ]}
+            />
+            <Text style={styles.pingValue}>{isConnected ? `${latencyMs}ms` : 'offline'}</Text>
+          </View>
         </View>
 
-        <View style={styles.detailRow}>
-          <Text style={styles.detailText}>📏 Taille: {length}</Text>
-          <Text style={styles.detailText}>⚔️ Kills: {kills}</Text>
-        </View>
+        <Text style={styles.scoreValue}>{score}</Text>
 
-        <View style={styles.networkBadge}>
-          <View
-            style={[
-              styles.statusDot,
-              { backgroundColor: isConnected ? getPingColor(latencyMs) : COLORS.DANGER },
-            ]}
-          />
-          <Text style={styles.pingText}>
-            {isConnected ? `${latencyMs} ms` : 'Déconnecté'}
-          </Text>
+        <View style={styles.statsDetailsRow}>
+          <Text style={styles.statDetailText}>📏 TAILLE : {length}</Text>
+          <Text style={styles.statDetailText}>⚔️ KILLS : {kills}</Text>
         </View>
       </View>
 
-      {/* 2. Notification Serveur / Killfeed */}
+      {/* 2. NOTIFICATION SERVEUR FLOTTANTE */}
       {notification && (
-        <View style={styles.notificationContainer}>
+        <View style={styles.notificationBanner}>
           <Text style={styles.notificationText}>{notification}</Text>
         </View>
       )}
 
-      {/* 3. Classement en Direct (Leaderboard Top 5) */}
-      <View style={[styles.leaderboardCard, isLandscape ? styles.lbLandscape : styles.lbPortrait]}>
-        <Text style={styles.lbTitle}>🏆 CLASSEMENT</Text>
-        {leaderboard.slice(0, 5).map((entry, idx) => {
+      {/* 3. PANNEAU HAUT-DROITE : CLASSEMENT TOP 10 AVEC TROPHÉE ET GEAR */}
+      <View style={[styles.leaderboardCard, isLandscape && styles.leaderboardLandscape]}>
+        <View style={styles.lbHeaderRow}>
+          <Text style={styles.lbTitle}>🏆 CLASSEMENT</Text>
+          <TouchableOpacity style={styles.settingsIcon} activeOpacity={0.7}>
+            <Text style={styles.settingsIconText}>⚙️</Text>
+          </TouchableOpacity>
+        </View>
+
+        {leaderboard.slice(0, 10).map((entry, idx) => {
           const isMe = entry.id === myPlayerId;
+          const rankColor = RANK_COLORS[idx] || '#FFFFFF';
+
           return (
-            <View key={entry.id || idx} style={styles.lbRow}>
-              <Text style={[styles.lbRank, isMe && styles.highlightText]}>
+            <View key={entry.id || idx} style={styles.lbEntryRow}>
+              <Text style={[styles.entryRank, { color: rankColor }]}>
                 #{idx + 1}
               </Text>
               <Text
-                style={[styles.lbName, isMe && styles.highlightText]}
+                style={[
+                  styles.entryName,
+                  isMe ? styles.entryNameMe : { color: rankColor },
+                ]}
                 numberOfLines={1}
               >
                 {entry.name}
               </Text>
-              <Text style={[styles.lbScore, isMe && styles.highlightText]}>
+              <Text style={[styles.entryScore, isMe && styles.entryScoreMe]}>
                 {entry.score}
               </Text>
             </View>
           );
         })}
       </View>
+
+      {/* 4. BAS-DROITE : MINI-RADAR CIRCULAIRE (Au-dessus du bouton boost) */}
+      <View style={styles.radarWrapper}>
+        <MiniRadar
+          players={players}
+          myPlayerId={myPlayerId}
+          leaderboard={leaderboard}
+          size={84}
+        />
+      </View>
     </View>
   );
 };
 
 const styles = StyleSheet.create({
-  topBar: {
-    position: 'absolute',
-    top: 40,
-    left: 20,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  topBarLandscape: {
-    top: 15,
-    left: 20,
-  },
+  // Panneau Haut-Gauche (Score néon)
   statsCard: {
-    backgroundColor: 'rgba(11, 21, 40, 0.85)',
+    position: 'absolute',
+    top: 16,
+    left: 16,
+    backgroundColor: 'rgba(4, 9, 20, 0.85)',
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: '#00E5FF',
     paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: COLORS.BORDER,
+    paddingVertical: 10,
+    shadowColor: '#00E5FF',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.4,
+    shadowRadius: 10,
+    elevation: 8,
+    minWidth: 130,
+  },
+  statsCardLandscape: {
+    top: 14,
+    left: 18,
+  },
+  scoreHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 8,
   },
   scoreLabel: {
     color: COLORS.SECONDARY_CYAN,
     fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 1,
+    fontWeight: '900',
+    letterSpacing: 1.5,
+  },
+  pingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  pingDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  pingValue: {
+    color: '#64748B',
+    fontSize: 9,
+    fontWeight: '700',
   },
   scoreValue: {
     color: COLORS.PRIMARY_NEON,
-    fontSize: 22,
+    fontSize: 26,
     fontWeight: '900',
+    letterSpacing: 1,
+    marginVertical: 1,
+    textShadowColor: 'rgba(0, 255, 102, 0.6)',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 8,
   },
-  detailRow: {
-    backgroundColor: 'rgba(11, 21, 40, 0.85)',
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderRadius: 8,
-    gap: 4,
-    borderWidth: 1,
-    borderColor: COLORS.BORDER,
+  statsDetailsRow: {
+    gap: 2,
+    marginTop: 2,
   },
-  detailText: {
-    color: COLORS.TEXT_LIGHT,
-    fontSize: 11,
-    fontWeight: '600',
+  statDetailText: {
+    color: '#CBD5E1',
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.3,
   },
-  networkBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(11, 21, 40, 0.85)',
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderRadius: 8,
-    gap: 6,
-    borderWidth: 1,
-    borderColor: COLORS.BORDER,
-  },
-  statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  pingText: {
-    color: COLORS.TEXT_LIGHT,
-    fontSize: 11,
-    fontWeight: 'bold',
-  },
-  notificationContainer: {
+
+  // Notification serveur / Killfeed
+  notificationBanner: {
     position: 'absolute',
-    top: 100,
+    top: 20,
     alignSelf: 'center',
-    backgroundColor: 'rgba(255, 0, 119, 0.85)',
+    backgroundColor: 'rgba(236, 72, 153, 0.92)',
     paddingHorizontal: 16,
     paddingVertical: 6,
-    borderRadius: 20,
+    borderRadius: 16,
+    shadowColor: '#EC4899',
+    shadowOpacity: 0.5,
+    shadowRadius: 10,
   },
   notificationText: {
     color: '#FFFFFF',
     fontWeight: 'bold',
-    fontSize: 12,
-  },
-  leaderboardCard: {
-    position: 'absolute',
-    backgroundColor: 'rgba(11, 21, 40, 0.88)',
-    padding: 10,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: COLORS.BORDER,
-    width: 175,
-  },
-  lbPortrait: {
-    top: 40,
-    right: 15,
-  },
-  lbLandscape: {
-    top: 15,
-    right: 20,
-  },
-  lbTitle: {
-    color: COLORS.ACCENT_GOLD,
     fontSize: 11,
-    fontWeight: '900',
-    marginBottom: 6,
     letterSpacing: 0.5,
   },
-  lbRow: {
+
+  // Panneau Haut-Droite (Leaderboard Top 10)
+  leaderboardCard: {
+    position: 'absolute',
+    top: 16,
+    right: 16,
+    backgroundColor: 'rgba(4, 9, 20, 0.85)',
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: '#19335A',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    minWidth: 160,
+    maxWidth: 180,
+    shadowColor: '#00E5FF',
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+  },
+  leaderboardLandscape: {
+    top: 14,
+    right: 18,
+  },
+  lbHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: '#122543',
+    paddingBottom: 4,
+  },
+  lbTitle: {
+    color: '#FBBF24',
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 1,
+  },
+  settingsIcon: {
+    padding: 2,
+  },
+  settingsIconText: {
+    fontSize: 12,
+  },
+  lbEntryRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginVertical: 2,
+    marginVertical: 1.5,
   },
-  lbRank: {
-    color: COLORS.TEXT_MUTED,
-    fontSize: 11,
-    width: 24,
+  entryRank: {
+    fontSize: 10,
+    fontWeight: '800',
+    width: 22,
+  },
+  entryName: {
+    flex: 1,
+    fontSize: 10,
     fontWeight: '700',
   },
-  lbName: {
-    color: COLORS.TEXT_LIGHT,
-    fontSize: 11,
-    flex: 1,
-    fontWeight: '600',
-  },
-  lbScore: {
-    color: COLORS.SECONDARY_CYAN,
-    fontSize: 11,
-    fontWeight: 'bold',
-  },
-  highlightText: {
+  entryNameMe: {
     color: COLORS.PRIMARY_NEON,
     fontWeight: '900',
+  },
+  entryScore: {
+    color: '#94A3B8',
+    fontSize: 10,
+    fontWeight: '700',
+    marginLeft: 6,
+  },
+  entryScoreMe: {
+    color: COLORS.PRIMARY_NEON,
+    fontWeight: '900',
+  },
+
+  // Radar bas-droite
+  radarWrapper: {
+    position: 'absolute',
+    right: 20,
+    bottom: 125,
   },
 });

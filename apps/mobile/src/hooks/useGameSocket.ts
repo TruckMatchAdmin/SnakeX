@@ -2,7 +2,7 @@
  * Hook de connexion multijoueur Socket.IO et synchronisation temps réel
  */
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, MutableRefObject } from 'react';
 import { io, Socket } from 'socket.io-client';
 import {
   ArenaConfig,
@@ -15,16 +15,38 @@ import {
   ServerEvent,
   TickPayload,
 } from '@snakex/shared';
+import type { LocalInput } from '../utils/prediction';
 
 // URL par défaut du serveur de jeu OVH VPS (Reverse proxy Nginx port 80)
 const DEFAULT_SERVER_URL = process.env.EXPO_PUBLIC_SERVER_URL || 'http://152.228.137.4';
+
+export type PlayersSnapshot = TickPayload['players'];
+
+export interface TimedSnapshot {
+  /** Heure de réception locale (ms) — évite toute dérive d'horloge serveur/client */
+  t: number;
+  players: PlayersSnapshot;
+}
+
+// Nombre max de snapshots conservés pour l'interpolation
+const MAX_SNAPSHOTS = 8;
+// Fréquence max de mise à jour du state React (HUD, radar) en ms
+const UI_UPDATE_INTERVAL_MS = 100;
 
 export interface UseGameSocketReturn {
   isConnected: boolean;
   myPlayerId: string | null;
   arenaConfig: ArenaConfig | null;
+  /** Buffer de snapshots lu à 60 FPS par le rendu (sans re-render React) */
+  snapshotsRef: MutableRefObject<TimedSnapshot[]>;
+  /** Dernière entrée envoyée (angle visé + boost), pour la prédiction locale */
+  inputRef: MutableRefObject<LocalInput>;
+  /** Latence aller-retour courante (ms), sans re-render */
+  latencyRef: MutableRefObject<number>;
+  /** Orbes courants (mutés en place, sans re-render React) */
+  orbsMapRef: MutableRefObject<Map<string, Orb>>;
+  /** Version throttlée (~10 Hz) pour HUD / radar */
   players: TickPayload['players'];
-  orbs: Orb[];
   leaderboard: LeaderboardEntry[];
   deathStats: DiedPayload | null;
   latencyMs: number;
@@ -32,6 +54,7 @@ export interface UseGameSocketReturn {
   joinGame: (name: string, authToken?: string) => void;
   sendInput: (angle: number, boost: boolean) => void;
   respawn: () => void;
+  resetDeath: () => void;
   reconnect: () => void;
 }
 
@@ -40,7 +63,6 @@ export function useGameSocket(serverUrl: string = DEFAULT_SERVER_URL): UseGameSo
   const [myPlayerId, setMyPlayerId] = useState<string | null>(null);
   const [arenaConfig, setArenaConfig] = useState<ArenaConfig | null>(null);
   const [players, setPlayers] = useState<TickPayload['players']>([]);
-  const [orbs, setOrbs] = useState<Orb[]>([]);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [deathStats, setDeathStats] = useState<DiedPayload | null>(null);
   const [latencyMs, setLatencyMs] = useState(0);
@@ -48,12 +70,16 @@ export function useGameSocket(serverUrl: string = DEFAULT_SERVER_URL): UseGameSo
 
   const socketRef = useRef<Socket | null>(null);
   const orbsMapRef = useRef<Map<string, Orb>>(new Map());
+  const snapshotsRef = useRef<TimedSnapshot[]>([]);
+  const lastUiUpdateRef = useRef(0);
   const inputSeqRef = useRef(0);
+  const inputRef = useRef<LocalInput>({ angle: null, boost: false });
+  const latencyRef = useRef(0);
 
   // Initialisation du socket
   useEffect(() => {
     const socket = io(serverUrl, {
-      transports: ['websocket', 'polling'],
+      transports: ['websocket'],
       reconnection: true,
       reconnectionAttempts: Infinity,
       reconnectionDelay: 1000,
@@ -76,22 +102,41 @@ export function useGameSocket(serverUrl: string = DEFAULT_SERVER_URL): UseGameSo
       setMyPlayerId(data.playerId);
       setArenaConfig(data.arena);
       setLeaderboard(data.leaderboard);
+      if (data.orbs && data.orbs.length > 0) {
+        orbsMapRef.current.clear();
+        for (const orb of data.orbs) {
+          orbsMapRef.current.set(orb.id, orb);
+        }
+      }
+      // Nouveau serpent : on repart d'un buffer propre (évite d'interpoler depuis l'ancienne position)
+      snapshotsRef.current = [];
+      inputRef.current = { angle: null, boost: false };
       setDeathStats(null);
     });
 
     socket.on(ServerEvent.TICK, (tick: TickPayload) => {
-      // 1. Mise à jour des joueurs
-      setPlayers(tick.players);
+      const now = Date.now();
 
-      // 2. Mise à jour incrémentale des orbes
+      // 1. Buffer de snapshots pour l'interpolation (aucun re-render React)
+      const buf = snapshotsRef.current;
+      buf.push({ t: now, players: tick.players });
+      if (buf.length > MAX_SNAPSHOTS) buf.shift();
+
+      // 2. State React throttlé (HUD / radar / score)
+      if (now - lastUiUpdateRef.current >= UI_UPDATE_INTERVAL_MS) {
+        lastUiUpdateRef.current = now;
+        setPlayers(tick.players);
+        if (tick.leaderboard) setLeaderboard(tick.leaderboard);
+      }
+
+      // 3. Orbes : mutation en place, lue directement par le rendu
       const orbsMap = orbsMapRef.current;
-      for (const added of tick.orbsAdded) {
-        orbsMap.set(added.id, added);
+      if (tick.orbsAdded) {
+        for (const added of tick.orbsAdded) orbsMap.set(added.id, added);
       }
-      for (const removedId of tick.orbsRemoved) {
-        orbsMap.delete(removedId);
+      if (tick.orbsRemoved) {
+        for (const removedId of tick.orbsRemoved) orbsMap.delete(removedId);
       }
-      setOrbs(Array.from(orbsMap.values()));
     });
 
     socket.on(ServerEvent.LEADERBOARD, (lb: LeaderboardEntry[]) => {
@@ -104,7 +149,9 @@ export function useGameSocket(serverUrl: string = DEFAULT_SERVER_URL): UseGameSo
 
     socket.on(ServerEvent.PONG, (pong: { clientTime: number }) => {
       if (pong && pong.clientTime) {
-        setLatencyMs(Date.now() - pong.clientTime);
+        const rtt = Date.now() - pong.clientTime;
+        latencyRef.current = rtt;
+        setLatencyMs(rtt);
       }
     });
 
@@ -128,13 +175,13 @@ export function useGameSocket(serverUrl: string = DEFAULT_SERVER_URL): UseGameSo
 
   const joinGame = useCallback((name: string, authToken?: string) => {
     if (socketRef.current?.connected) {
-      orbsMapRef.current.clear();
-      setOrbs([]);
       socketRef.current.emit(ClientEvent.JOIN, { name, authToken });
     }
   }, []);
 
   const sendInput = useCallback((angle: number, boost: boolean) => {
+    // L'entrée est mémorisée même hors connexion : la prédiction réagit immédiatement
+    inputRef.current = { angle, boost };
     if (socketRef.current?.connected) {
       inputSeqRef.current++;
       const payload: InputPayload = {
@@ -153,6 +200,10 @@ export function useGameSocket(serverUrl: string = DEFAULT_SERVER_URL): UseGameSo
     }
   }, []);
 
+  const resetDeath = useCallback(() => {
+    setDeathStats(null);
+  }, []);
+
   const reconnect = useCallback(() => {
     socketRef.current?.connect();
   }, []);
@@ -161,8 +212,11 @@ export function useGameSocket(serverUrl: string = DEFAULT_SERVER_URL): UseGameSo
     isConnected,
     myPlayerId,
     arenaConfig,
+    snapshotsRef,
+    inputRef,
+    latencyRef,
+    orbsMapRef,
     players,
-    orbs,
     leaderboard,
     deathStats,
     latencyMs,
@@ -170,6 +224,7 @@ export function useGameSocket(serverUrl: string = DEFAULT_SERVER_URL): UseGameSo
     joinGame,
     sendInput,
     respawn,
+    resetDeath,
     reconnect,
   };
 }

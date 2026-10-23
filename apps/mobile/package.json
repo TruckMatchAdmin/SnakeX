@@ -2,21 +2,27 @@
   "name": "@snakex/mobile",
   "version": "1.0.0",
   "private": true,
+  "main": "index.js",
   "scripts": {
     "start": "expo start",
+    "start:lan": "expo start --lan",
+    "start:tunnel": "expo start --tunnel",
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web"
   },
   "dependencies": {
+    "@expo/metro-runtime": "^58.0.15",
     "@snakex/shared": "*",
     "@supabase/supabase-js": "^2.43.0",
     "expo": "~58.0.17",
     "expo-screen-orientation": "~58.0.3",
     "expo-status-bar": "~58.0.4",
     "react": "19.3.0",
+    "react-dom": "^19.3.0",
     "react-native": "0.88.0",
     "react-native-svg": "15.16.0",
+    "react-native-web": "^0.21.4",
     "socket.io-client": "^4.7.5"
   },
   "devDependencies": {
